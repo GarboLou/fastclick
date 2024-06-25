@@ -82,6 +82,91 @@ extern bool dpdk_enabled;
 #define MY_PCI_ANY_ID PCI_ANY_ID
 #endif
 
+#define TICKS_PER_CYCLE_SHIFT 24
+
+
+// Hardware timestamping
+extern int hwts_dynfield_offset;
+extern uint64_t ticks_per_cycle_mult;
+extern uint64_t nic_frequency;
+extern uint64_t host_frequency;
+extern uint64_t rx_timestamp_burst[32][32];
+
+static inline bool
+is_timestamp_enabled(const struct rte_mbuf *mbuf)
+{
+	static uint64_t timestamp_rx_dynflag;
+	int timestamp_rx_dynflag_offset;
+
+	if (timestamp_rx_dynflag == 0) {
+		timestamp_rx_dynflag_offset = rte_mbuf_dynflag_lookup(
+				RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL);
+		if (timestamp_rx_dynflag_offset < 0)
+			return false;
+		timestamp_rx_dynflag = RTE_BIT64(timestamp_rx_dynflag_offset);
+	}
+
+	return (mbuf->ol_flags & timestamp_rx_dynflag) != 0;
+}
+
+static inline rte_mbuf_timestamp_t
+get_nic_rx_timestamp(const struct rte_mbuf *mbuf)
+{
+	static int timestamp_dynfield_offset = -1;
+
+	if (timestamp_dynfield_offset < 0) {
+		timestamp_dynfield_offset = rte_mbuf_dynfield_lookup(
+				RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL);
+		if (timestamp_dynfield_offset < 0)
+			return 0;
+	}
+
+	return *RTE_MBUF_DYNFIELD(mbuf,
+			timestamp_dynfield_offset, rte_mbuf_timestamp_t *);
+}
+
+static uint64_t calc_nic_to_host_ratio()
+{
+    uint64_t cycles_base = rte_rdtsc();
+    uint64_t ticks_base;
+    int retval = rte_eth_read_clock(0, &ticks_base);
+    if (retval != 0)
+        return retval;
+    rte_delay_ms(1000);
+    uint64_t cycles = rte_rdtsc();
+    uint64_t ticks;
+    rte_eth_read_clock(0, &ticks);
+    uint64_t c_freq = cycles - cycles_base;
+    uint64_t t_freq = ticks - ticks_base;
+    double freq_mult = (double)c_freq / t_freq;
+    nic_frequency = t_freq;
+    host_frequency = c_freq;
+    printf("TSC Freq ~= %" PRIu64
+            "\nHW Freq ~= %" PRIu64
+            "\nRatio : %f\n",
+            c_freq, t_freq, freq_mult);
+    /* TSC will be faster than internal ticks so freq_mult is > 0
+    * We convert the multiplication to an integer shift & mult
+    */
+    ticks_per_cycle_mult = (1 << TICKS_PER_CYCLE_SHIFT) / freq_mult;
+    return ticks_per_cycle_mult;
+}
+
+static uint64_t calc_latency(uint16_t port,
+		struct rte_mbuf *pkt)
+{
+	uint64_t nic_cycles = 0;
+	uint64_t nic_ticks = 0;
+	uint64_t cur_nic_ticks;
+	unsigned i;
+
+	rte_eth_read_clock(port, &cur_nic_ticks);
+	nic_ticks += cur_nic_ticks - get_nic_rx_timestamp(pkt);
+	nic_cycles += (nic_ticks * ticks_per_cycle_mult) >> TICKS_PER_CYCLE_SHIFT;
+
+	return nic_cycles;
+}
+
 class DPDKDevice : public DPDKEthernetDevice {
 public:
 

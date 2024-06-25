@@ -648,6 +648,20 @@ int DPDKDevice::initialize_device(ErrorHandler *errh)
         dev_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info.flow_type_rss_offloads;
     }
 
+    if (!(dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TIMESTAMP)) {
+        printf("\nERROR: Port %u does not support hardware timestamping\n" , port_id);
+        return -1;
+    }
+    printf("RX hardware timestamping supported\n");
+    dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
+    rte_mbuf_dyn_rx_timestamp_register(&hwts_dynfield_offset, NULL);
+    printf("RX hardware timestamping hwts_dynfield_offset is %d\n", hwts_dynfield_offset);
+    // hwts_dynfield_offset = rte_mbuf_dynfield_lookup(RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL);
+    if (hwts_dynfield_offset < 0) {
+        printf("ERROR: Failed to register timestamp field\n");
+        return -rte_errno;
+    }
+
 #if RTE_VERSION >= RTE_VERSION_NUM(18,02,0,0)
     if (info.rx_offload & DEV_RX_OFFLOAD_TIMESTAMP) {
         if (!(dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TIMESTAMP)) {

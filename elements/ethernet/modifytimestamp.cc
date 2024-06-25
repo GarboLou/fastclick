@@ -27,7 +27,8 @@
 #include <click/args.hh>
 #include <click/error.hh>
 #include <click/tsctimestamp.hh>
-# include <click/dpdkdevice.hh>
+#include <click/dpdkdevice.hh>
+#include "../userlevel/queuedevice.hh"
 
 CLICK_DECLS
 
@@ -93,6 +94,7 @@ ModifyTimestamp::simple_action(Packet *p)
         // add compute access time to packet at offset
         memcpy(q->data() + _offset + header_offset + sizeof(access_time), &compute_time, sizeof(compute_time));
 
+        // printf("nic rx latency is %lf us\n", *(double *)(q->data() + _offset + header_offset + 2*sizeof(uint64_t)));
         // printf("delay is %d\n", _delay);
         return q;
     } else

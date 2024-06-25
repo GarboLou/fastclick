@@ -26,6 +26,7 @@
 #include <click/etheraddress.hh>
 #include <click/straccum.hh>
 #include <click/dpdk_glue.hh>
+#include <click/dpdkdevice.hh>
 
 #include "fromdpdkdevice.hh"
 #include "tscclock.hh"
@@ -48,6 +49,12 @@
 CLICK_DECLS
 
 #define LOAD_UNIT 10
+
+int hwts_dynfield_offset = -1;
+uint64_t ticks_per_cycle_mult;
+uint64_t nic_frequency;
+uint64_t host_frequency;
+uint64_t rx_timestamp_burst[32][32] = {0};
 
 FromDPDKDevice::FromDPDKDevice() :
     _dev(0), _tco(false), _uco(false), _ipco(false)
@@ -301,6 +308,8 @@ int FromDPDKDevice::initialize(ErrorHandler *errh)
 #endif
     }
 
+    calc_nic_to_host_ratio();
+
 #if HAVE_DPDK_INTERRUPT
     if (_rx_intr >= 0) {
         for (int i = firstqueue; i <= lastqueue; i++) {
@@ -368,9 +377,19 @@ FromDPDKDevice::_run_task(int iqueue)
  unsigned n = rte_eth_rx_burst(_dev->port_id, iqueue, pkts, _burst);
 #endif
 
+size_t header_offset = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr);
+double nic_rx_lat;
+uint64_t nic_cycles;
 for (unsigned i = 0; i < n; ++i) {
+    if (is_timestamp_enabled(pkts[i])) {
+        nic_cycles = calc_latency(0, pkts[i]);
+        nic_rx_lat = (double)nic_cycles / (double)host_frequency * 1E6;
+        rx_timestamp_burst[iqueue][i] = nic_cycles;
+        // printf("timestamp %ld cycles, latency is %lf us\n", nic_cycles, nic_rx_lat);
+    }
     unsigned char *data = rte_pktmbuf_mtod(pkts[i], unsigned char *);
     rte_prefetch0(data);
+    memcpy(data + header_offset + 3*sizeof(uint64_t), &nic_rx_lat, sizeof(nic_rx_lat));
 #if CLICK_PACKET_USE_DPDK
     WritablePacket *p = static_cast<WritablePacket *>(Packet::make(pkts[i], _clear));
 #elif HAVE_ZEROCOPY

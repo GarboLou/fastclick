@@ -90,7 +90,6 @@ extern int hwts_dynfield_offset;
 extern uint64_t ticks_per_cycle_mult;
 extern uint64_t nic_frequency;
 extern uint64_t host_frequency;
-extern uint64_t rx_timestamp_burst[32][32];
 
 static inline bool
 is_timestamp_enabled(const struct rte_mbuf *mbuf)
@@ -152,17 +151,15 @@ static uint64_t calc_nic_to_host_ratio()
     return ticks_per_cycle_mult;
 }
 
-static uint64_t calc_latency(uint16_t port,
+static uint64_t calc_latency(uint64_t cur_nic_ticks,
 		struct rte_mbuf *pkt)
 {
 	uint64_t nic_cycles = 0;
 	uint64_t nic_ticks = 0;
-	uint64_t cur_nic_ticks;
 	unsigned i;
 
-	rte_eth_read_clock(port, &cur_nic_ticks);
-	nic_ticks += cur_nic_ticks - get_nic_rx_timestamp(pkt);
-	nic_cycles += (nic_ticks * ticks_per_cycle_mult) >> TICKS_PER_CYCLE_SHIFT;
+	nic_ticks = cur_nic_ticks - get_nic_rx_timestamp(pkt);
+	nic_cycles = (nic_ticks * ticks_per_cycle_mult) >> TICKS_PER_CYCLE_SHIFT;
 
 	return nic_cycles;
 }

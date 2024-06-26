@@ -54,7 +54,6 @@ int hwts_dynfield_offset = -1;
 uint64_t ticks_per_cycle_mult;
 uint64_t nic_frequency;
 uint64_t host_frequency;
-uint64_t rx_timestamp_burst[32][32] = {0};
 
 FromDPDKDevice::FromDPDKDevice() :
     _dev(0), _tco(false), _uco(false), _ipco(false)
@@ -379,17 +378,20 @@ FromDPDKDevice::_run_task(int iqueue)
 
 size_t header_offset = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr);
 double nic_rx_lat;
+uint64_t cur_nic_ticks;
+rte_eth_read_clock(_dev->port_id, &cur_nic_ticks);
 uint64_t nic_cycles;
 for (unsigned i = 0; i < n; ++i) {
-    if (is_timestamp_enabled(pkts[i])) {
-        nic_cycles = calc_latency(0, pkts[i]);
+    nic_cycles = calc_latency(cur_nic_ticks, pkts[i]);
+    if (nic_cycles > 0) {
         nic_rx_lat = (double)nic_cycles / (double)host_frequency * 1E6;
-        rx_timestamp_burst[iqueue][i] = nic_cycles;
         // printf("timestamp %ld cycles, latency is %lf us\n", nic_cycles, nic_rx_lat);
     }
     unsigned char *data = rte_pktmbuf_mtod(pkts[i], unsigned char *);
     rte_prefetch0(data);
-    memcpy(data + header_offset + 3*sizeof(uint64_t), &nic_rx_lat, sizeof(nic_rx_lat));
+    if (nic_cycles > 0) {
+        memcpy(data + header_offset + 3*sizeof(uint64_t), &nic_rx_lat, sizeof(nic_rx_lat));
+    }
 #if CLICK_PACKET_USE_DPDK
     WritablePacket *p = static_cast<WritablePacket *>(Packet::make(pkts[i], _clear));
 #elif HAVE_ZEROCOPY
